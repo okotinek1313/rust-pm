@@ -1,3 +1,6 @@
+mod parsers;
+
+
 fn main() {
-    println!("Hello, world!");
+    parsers::run_parser("../data");
 }
