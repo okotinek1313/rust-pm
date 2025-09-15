@@ -3,3 +3,6 @@
 # Added by cargo
 
 /target
+
+# Generated Files
+packages.json
