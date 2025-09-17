@@ -3,6 +3,12 @@ use std::io::Write;
 use serde::{Serialize, Deserialize};
 use scraper::{Html, Selector};
 use reqwest::blocking::Client;
+use std::fs;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ServersConfig {
+    pub repositories: Vec<String>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Package {
@@ -28,55 +34,63 @@ pub struct PackageRegistry {
 }
 
 pub fn exec(url: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let target_url = url.unwrap_or_else(|| {
-        "https://dl-cdn.alpinelinux.org/alpine/v3.19/main/x86_64/".to_string()
-    });
+    let urls = if let Some(single_url) = url {
+        // Single URL provided via command line
+        vec![single_url]
+    } else {
+        // Load URLs from servers.json
+        load_servers_config()?.repositories
+    };
 
-    println!("🔍 Parsing Alpine Linux packages from: {}", target_url);
-    
-    // Fetch the HTML content
-    let client = Client::new();
-    let response = client.get(&target_url).send()?;
-    
-    if !response.status().is_success() {
-        return Err(format!("Failed to fetch repository page: {}", response.status()).into());
-    }
-    
-    let html_content = response.text()?;
-    let document = Html::parse_document(&html_content);
-    
-    // Parse packages from the HTML
-    let packages = parse_packages(&document)?;
-    
-    println!("📦 Found {} packages", packages.len());
-    
     // Load existing registry or create new one
     let mut registry = load_existing_registry().unwrap_or_else(|_| PackageRegistry {
         repositories: Vec::new(),
         total_packages: 0,
     });
     
-    // Check if repository already exists and update it, or add new one
-    let new_repo = Repository {
-        url: target_url.clone(),
-        architecture: "x86_64".to_string(),
-        package_count: packages.len(),
-        packages,
-    };
+    let client = Client::new();
     
-    let mut found_existing = false;
-    for repo in &mut registry.repositories {
-        if repo.url == target_url {
-            println!("🔄 Updating existing repository: {}", target_url);
-            *repo = new_repo.clone();
-            found_existing = true;
-            break;
+    for target_url in urls {
+        println!("🔍 Parsing Alpine Linux packages from: {}", target_url);
+        
+        // Fetch the HTML content
+        let response = client.get(&target_url).send()?;
+        
+        if !response.status().is_success() {
+            eprintln!("⚠️ Failed to fetch repository page {}: {}", target_url, response.status());
+            continue;
         }
-    }
-    
-    if !found_existing {
-        println!("➕ Adding new repository: {}", target_url);
-        registry.repositories.push(new_repo);
+        
+        let html_content = response.text()?;
+        let document = Html::parse_document(&html_content);
+        
+        // Parse packages from the HTML
+        let packages = parse_packages(&document)?;
+        
+        println!("📦 Found {} packages", packages.len());
+        
+        // Check if repository already exists and update it, or add new one
+        let new_repo = Repository {
+            url: target_url.clone(),
+            architecture: "x86_64".to_string(),
+            package_count: packages.len(),
+            packages,
+        };
+        
+        let mut found_existing = false;
+        for repo in &mut registry.repositories {
+            if repo.url == target_url {
+                println!("🔄 Updating existing repository: {}", target_url);
+                *repo = new_repo.clone();
+                found_existing = true;
+                break;
+            }
+        }
+        
+        if !found_existing {
+            println!("➕ Adding new repository: {}", target_url);
+            registry.repositories.push(new_repo);
+        }
     }
     
     // Update total package count
@@ -94,10 +108,15 @@ pub fn exec(url: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn load_existing_registry() -> Result<PackageRegistry, Box<dyn std::error::Error>> {
-    use std::fs;
     let content = fs::read_to_string("packages.json")?;
     let registry: PackageRegistry = serde_json::from_str(&content)?;
     Ok(registry)
+}
+
+fn load_servers_config() -> Result<ServersConfig, Box<dyn std::error::Error>> {
+    let content = fs::read_to_string("servers.json")?;
+    let config: ServersConfig = serde_json::from_str(&content)?;
+    Ok(config)
 }
 
 fn parse_packages(document: &Html) -> Result<Vec<Package>, Box<dyn std::error::Error>> {

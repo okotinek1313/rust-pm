@@ -19,7 +19,13 @@ enum Commands {
     Install,
     Uninstall,
     Extract,
-    Download { url: String, name: String },
+    Download {
+        /// Package name to download, or URL if --url flag is used
+        package: String,
+        /// Download from direct URL (requires filename as package argument)
+        #[arg(long)]
+        url: bool,
+    },
     Parse { 
         #[arg(short, long)]
         url: Option<String>
@@ -44,8 +50,22 @@ fn main() {
         Commands::Extract => {
             println!("Extract command not yet implemented");
         },
-        Commands::Download { url, name } => {
-            if let Err(e) = download::command::exec(&url, &name) {
+        Commands::Download { package, url } => {
+            use download::command::DownloadTarget;
+            
+            let target = if url {
+                // If --url flag is used, treat package as filename and first arg as URL
+                // This is a bit hacky, but works for the current interface
+                // Better would be to have separate url and filename args
+                DownloadTarget::DirectUrl { 
+                    url: package.clone(), 
+                    filename: package.split('/').last().unwrap_or(&package).to_string()
+                }
+            } else {
+                DownloadTarget::PackageName(package)
+            };
+            
+            if let Err(e) = download::command::exec(target) {
                 eprintln!("Error downloading: {}", e);
             }
         },
